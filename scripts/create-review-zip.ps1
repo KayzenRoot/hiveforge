@@ -129,7 +129,7 @@ function Assert-ZipIsValid {
       "evidence/remote.txt", "evidence/compare-base.txt", "evidence/pr.txt",
       "evidence/release.txt", "evidence/ci-status.txt",
       "evidence/commands-run.txt", "validation/tests.txt", "validation/lint.txt",
-      "validation/typecheck.txt", "validation/build.txt"
+      "validation/typecheck.txt", "validation/build.txt", "validation/e2e.txt"
     )
     foreach ($entry in $required) {
       if ($names -notcontains $entry) { throw "ZIP is missing required entry: $entry" }
@@ -237,7 +237,7 @@ try {
 
   $packagePath = Join-Path $RepoRoot "package.json"
   $package = if (Test-Path -LiteralPath $packagePath) { Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json } else { $null }
-  $scriptNames = [ordered]@{ tests = "test"; lint = "lint"; typecheck = "typecheck"; build = "build" }
+  $scriptNames = [ordered]@{ tests = "test"; e2e = "test:e2e"; lint = "lint"; typecheck = "typecheck"; build = "build" }
   $validation = [ordered]@{}
   foreach ($label in $scriptNames.Keys) {
     $scriptName = $scriptNames[$label]
@@ -281,7 +281,7 @@ try {
     "REVIEW-MANIFEST.md", "REVIEW-MANIFEST.json",
     "evidence/git-status.txt", "evidence/git-log.txt", "evidence/git-branches.txt", "evidence/git-head.txt", "evidence/git-diff-stat.txt", "evidence/git-diff.patch", "evidence/changed-files.txt", "evidence/repository-tree.txt", "evidence/environment.txt", "evidence/commands-run.txt",
     "evidence/remote.txt", "evidence/compare-base.txt", "evidence/pr.txt", "evidence/release.txt", "evidence/ci-status.txt",
-    "validation/tests.txt", "validation/lint.txt", "validation/typecheck.txt", "validation/build.txt", "repository/"
+    "validation/tests.txt", "validation/e2e.txt", "validation/lint.txt", "validation/typecheck.txt", "validation/build.txt", "repository/"
   )
   Write-Utf8File -Path (Join-Path $RunDirectory "evidence/changed-files.txt") -Content $(if ($changedFiles.Count -gt 0) { $changedFiles -join "`r`n" } else { "<none>" })
 

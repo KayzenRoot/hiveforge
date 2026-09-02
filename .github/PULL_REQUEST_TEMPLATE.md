@@ -5,6 +5,7 @@
 ## Validation
 
 - [ ] `npm test`
+- [ ] `npm run test:e2e`
 - [ ] `npm run lint`
 - [ ] `npm run typecheck`
 - [ ] `npm run build`

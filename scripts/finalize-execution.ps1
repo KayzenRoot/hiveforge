@@ -22,7 +22,7 @@ Set-Location $RepoRoot
 
 $CanonicalRemote = "https://github.com/KayzenRoot/hiveforge.git"
 $Repository = "KayzenRoot/hiveforge"
-$RequiredChecks = @("test", "lint", "typecheck", "build")
+$RequiredChecks = @("test", "test:e2e", "lint", "typecheck", "build")
 
 function Get-CommandText {
     param([Parameter(Mandatory = $true)][string[]]$Command)
@@ -255,7 +255,7 @@ if (-not $Bootstrap) {
     $prUrl = Get-CommandText @("gh", "pr", "list", "--repo", $Repository, "--head", $currentBranch, "--base", "main", "--state", "open", "--json", "url", "--jq", ".[0].url")
     if (-not $prUrl) {
         $lineBreak = [Environment]::NewLine
-        $prBody = "Work order: $WorkOrderId$lineBreak$lineBreak" + "Validation: npm test, npm run lint, npm run typecheck, npm run build.$lineBreak$lineBreak" + "This pull request is not auto-merged."
+        $prBody = "Work order: $WorkOrderId$lineBreak$lineBreak" + "Validation: npm test, npm run test:e2e, npm run lint, npm run typecheck, npm run build.$lineBreak$lineBreak" + "This pull request is not auto-merged."
         $prUrl = Invoke-Checked @("gh", "pr", "create", "--repo", $Repository, "--base", "main", "--head", $currentBranch, "--title", $CommitMessage, "--body", $prBody) "create pull request"
     }
     Write-Host "Pull request: $prUrl"

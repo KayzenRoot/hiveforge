@@ -15,7 +15,7 @@ The approved bootstrap may land directly on an empty `main`. All later changes u
 
 ## Required validation
 
-The CI workflow runs `npm ci`, `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` on pushes to `main` and work branches and on pull requests targeting `main`. A configured command failing blocks acceptance.
+The CI workflow runs `npm ci`, `npm test`, `npm run test:e2e`, `npm run lint`, `npm run typecheck`, and `npm run build` on pushes to `main` and work branches and on pull requests targeting `main`. A configured command failing blocks acceptance.
 
 ## Protection and permissions
 

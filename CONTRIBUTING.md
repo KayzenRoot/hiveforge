@@ -14,6 +14,7 @@ Install dependencies with `npm ci`, then run the full validation set before open
 
 ```powershell
 npm test
+npm run test:e2e
 npm run lint
 npm run typecheck
 npm run build

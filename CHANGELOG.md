@@ -13,6 +13,10 @@ All notable changes to HiveForge are documented here.
 - Add canonical RCP v0.1, immutable base/head Git evidence, validation persistence, recovery fencing, dynamic mailbox watchers and cross-process SSE replay.
 - Add dashboard evidence, integration coverage and a real Codex App Server smoke path.
 
+## [0.1.0-alpha.3]
+
+- Keep the canonical Review ZIP finalizer compatible with Windows PowerShell 5.1.
+
 ## [0.1.0-alpha.1]
 
 - Establish the GitHub professional baseline for the V0.1 MVP.
@@ -22,3 +26,4 @@ All notable changes to HiveForge are documented here.
 [Unreleased]: https://github.com/KayzenRoot/hiveforge/compare/v0.1.0-alpha.2...HEAD
 [0.1.0-alpha.1]: https://github.com/KayzenRoot/hiveforge/releases/tag/v0.1.0-alpha.1
 [0.1.0-alpha.2]: https://github.com/KayzenRoot/hiveforge/releases/tag/v0.1.0-alpha.2
+[0.1.0-alpha.3]: https://github.com/KayzenRoot/hiveforge/releases/tag/v0.1.0-alpha.3

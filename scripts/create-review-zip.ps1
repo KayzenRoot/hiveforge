@@ -56,13 +56,21 @@ function Invoke-CapturedCommand {
   $display = $Executable
   if ($Arguments.Count -gt 0) { $display += " " + ($Arguments -join " ") }
   $exitCode = 0
+  $previousErrorActionPreference = $ErrorActionPreference
+  $nativePreferenceExists = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+  $previousNativePreference = if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference } else { $false }
   try {
+    $ErrorActionPreference = "Continue"
+    if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference = $false }
     & $Executable @Arguments 1> $stdoutPath 2> $stderrPath
     $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
   } catch {
     $exitCode = 127
     Write-Utf8File -Path $stdoutPath -Content ""
     Write-Utf8File -Path $stderrPath -Content $_.Exception.Message
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference = $previousNativePreference }
   }
   $stdout = ""
   $stderr = ""
@@ -339,7 +347,9 @@ try {
   )
   foreach ($label in $validation.Keys) {
     $item = $validation[$label]
-    $markdown += "| $label | $($item.command ?? 'not configured') | $($item.exit_code ?? '-') | $($item.status) |"
+    $commandText = if ($null -eq $item.command) { "not configured" } else { [string]$item.command }
+    $exitText = if ($null -eq $item.exit_code) { "-" } else { [string]$item.exit_code }
+    $markdown += "| $label | $commandText | $exitText | $($item.status) |"
   }
   $markdown += @(
     "",
@@ -367,7 +377,8 @@ try {
   if ($SimulateFailureBeforeReplace) { throw "Simulated failure before canonical replacement." }
   Replace-CanonicalZip -Source $TemporaryZip -Destination $CanonicalZip
   Assert-ZipIsValid -ZipPath $CanonicalZip
-  Write-Host "Review ZIP ready: $([System.IO.Path]::GetRelativePath($RepoRoot, $CanonicalZip).Replace('\', '/'))"
+  $relativeZip = $CanonicalZip.Substring($RepoRoot.Length + 1).Replace('\', '/')
+  Write-Host "Review ZIP ready: $relativeZip"
 } catch {
   Write-Error $_
   exit 1

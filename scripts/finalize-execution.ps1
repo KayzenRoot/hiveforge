@@ -104,7 +104,6 @@ function Try-Protect-Main {
         }
         enforce_admins = $true
         required_pull_request_reviews = [ordered]@{
-            dismissal_restrictions = $null
             dismiss_stale_reviews = $true
             require_code_owner_reviews = $true
             required_approving_review_count = 1

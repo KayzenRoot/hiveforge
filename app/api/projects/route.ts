@@ -8,7 +8,8 @@ export function GET() {
   const { db } = getRuntime();
   const projects = db.listProjects().map((project) => {
     const run = db.getLatestRun(project.id);
-    return { ...project, latestRun: run ? { id: run.id, state: run.state, iterationCount: run.iterationCount, updatedAt: run.updatedAt } : undefined };
+    const overview = run ? db.getRunOverview(run.id) : undefined;
+    return { ...project, latestRun: overview ?? undefined };
   });
   return NextResponse.json({ projects });
 }

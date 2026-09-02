@@ -18,9 +18,12 @@ export const RUN_STATES = [
 ] as const;
 export type RunState = (typeof RUN_STATES)[number];
 
-export type ReviewDecision = "APPROVED" | "CORRECTION_REQUIRED" | "BLOCKED" | "COMPLETE";
-export type ReviewAction = "CONTINUE" | "EXECUTE_CORRECTION" | "BLOCKED" | "COMPLETE";
+export type ReviewVerdict = "APPROVED" | "CORRECTION_REQUIRED" | "BLOCKED" | "COMPLETE";
+export type ReviewNextAction = "CONTINUE" | "EXECUTE_CORRECTION" | "WAIT" | "STOP";
 export type ReviewStatus = "RECEIVED" | "ACCEPTED" | "REJECTED" | "CONSUMED";
+export type ValidationKind = "test" | "lint" | "typecheck" | "build";
+export type ValidationStatus = "PASS" | "FAIL" | "NOT_CONFIGURED" | "ERROR";
+export type CodexTurnStatus = "PREPARED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "INTERRUPTED" | "CANCELLED" | "ORPHANED";
 
 export interface ProjectInput {
   name: string;
@@ -55,9 +58,17 @@ export interface Run {
   correctionCycles: number;
   repeatedFindings: Record<string, number>;
   currentPrompt: string | null;
+  runBaseSha: string | null;
+  runBaseBranch: string | null;
   expectedBaseSha: string | null;
   expectedHeadSha: string | null;
   lastReviewId: string | null;
+  lastReviewStatus: ReviewStatus | null;
+  lastReviewVerdict: ReviewVerdict | null;
+  lastReviewSummary: string | null;
+  lastCheckpointNote: string | null;
+  progressPercent: number;
+  currentBlocker: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,29 +92,31 @@ export interface GitEvidence {
   status: string;
   changedFiles: string[];
   diffSummary: string;
+  isClean: boolean;
   capturedAt: string;
 }
 
 export interface ReviewFinding {
   id: string;
-  severity: "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  summary: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  title: string;
+  details: string;
 }
 
 export interface ReviewContract {
-  protocol: "RCP";
-  version: "0.1";
-  review_id: string;
-  project_id: string;
-  run_id: string;
-  work_order_id: string;
-  decision: ReviewDecision;
-  action: ReviewAction;
-  head_sha: string;
-  base_sha: string;
+  schemaVersion: "0.1";
+  reviewId: string;
+  projectId: string;
+  workOrderId: string;
+  baseSha: string;
+  headSha: string;
+  verdict: ReviewVerdict;
+  progressPercent: number;
+  summary: string;
   findings: ReviewFinding[];
-  executor_prompt: string;
-  created_at: string;
+  nextAction: ReviewNextAction;
+  executorPrompt: string;
+  checkpointNote: string;
 }
 
 export interface CodexThread {
@@ -116,8 +129,70 @@ export interface CodexThread {
   updatedAt: string;
 }
 
+export interface CodexTurn {
+  id: string;
+  runId: string;
+  threadId: string;
+  turnId: string;
+  dispatchKey: string;
+  prompt: string;
+  status: CodexTurnStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  validationStartedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ValidationResult {
+  id: string;
+  runId: string;
+  turnId: string;
+  kind: ValidationKind;
+  command: string | null;
+  startedAt: string;
+  finishedAt: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  status: ValidationStatus;
+}
+
+export interface ReviewSnapshot {
+  status: ReviewStatus;
+  review: ReviewContract;
+}
+
+export interface CodexTurnLifecycleEvent {
+  kind: "turn";
+  threadId: string;
+  turnId: string;
+  status: "completed" | "failed" | "interrupted";
+  error?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface CodexNotificationEvent {
+  kind: "notification";
+  method: string;
+  threadId?: string;
+  payload: Record<string, unknown>;
+}
+
+export type CodexLifecycleEvent = CodexTurnLifecycleEvent | CodexNotificationEvent;
+
+export interface RunOverview {
+  run: Run;
+  gitEvidence: GitEvidence | null;
+  validations: ValidationResult[];
+  review: ReviewSnapshot | null;
+  events: RunEvent[];
+}
+
 export interface CodexAdapter {
   readonly provider: "codex-app-server" | "fake";
+  setEventHandler(handler: (event: CodexLifecycleEvent) => void): void;
   startThread(input: { cwd: string; projectId?: string }): Promise<{ threadId: string }>;
   sendPrompt(input: { threadId: string; prompt: string; cwd: string }): Promise<{ turnId: string | null }>;
   close?(): Promise<void>;

@@ -158,7 +158,7 @@ try {
   $remoteUrlRecord = Invoke-CapturedCommand -Label "git remote origin" -Executable "git" -Arguments @("remote", "get-url", "origin") -AllowFailure
   $fetchMainRecord = Invoke-CapturedCommand -Label "git fetch origin main" -Executable "git" -Arguments @("fetch", "origin", "main", "--quiet") -AllowFailure
   $remoteMainRecord = Invoke-CapturedCommand -Label "git remote main" -Executable "git" -Arguments @("rev-parse", "--verify", "origin/main") -AllowFailure
-  $baseRecord = if ($remoteMainRecord.ExitCode -eq 0) { $remoteMainRecord } elseif ($headRecord.ExitCode -eq 0) { Invoke-CapturedCommand -Label "git base parent" -Executable "git" -Arguments @("rev-parse", "HEAD^") -AllowFailure } else { $null }
+  $baseRecord = if ($remoteMainRecord.ExitCode -eq 0) { $remoteMainRecord } else { $null }
   $logRecord = Invoke-CapturedCommand -Label "git log" -Executable "git" -Arguments @("log", "-10", "--oneline", "--decorate") -AllowFailure
   $branchesRecord = Invoke-CapturedCommand -Label "git branches" -Executable "git" -Arguments @("branch", "--all", "--verbose") -AllowFailure
   $headSha = if ($headRecord.ExitCode -eq 0) { $headRecord.Stdout.Trim() } else { $null }

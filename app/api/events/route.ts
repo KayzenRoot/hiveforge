@@ -5,7 +5,7 @@ import type { RunEvent } from "../../../src/core/types";
 export const runtime = "nodejs";
 
 function encode(event: RunEvent | Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+  return new TextEncoder().encode("data: " + JSON.stringify(event) + "\n\n");
 }
 
 export function GET(request: NextRequest) {
@@ -17,17 +17,34 @@ export function GET(request: NextRequest) {
 
   let unsubscribe: () => void = () => undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let poller: ReturnType<typeof setInterval> | undefined;
   let closed = false;
+  let lastCreatedAt = "";
+  let lastEventId = "";
+  const seen = new Set<string>();
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      for (const event of db.listEvents(runId)) controller.enqueue(encode(event));
-      unsubscribe = events.subscribe(runId, (event) => { if (!closed) controller.enqueue(encode(event)); });
+      const enqueue = (event: RunEvent) => {
+        if (closed || seen.has(event.id)) return;
+        seen.add(event.id);
+        lastCreatedAt = event.createdAt;
+        lastEventId = event.id;
+        controller.enqueue(encode(event));
+      };
+      for (const event of db.listEvents(runId, 250)) enqueue(event);
+      unsubscribe = events.subscribe(runId, enqueue);
+      poller = setInterval(() => {
+        if (closed) return;
+        for (const event of db.listEventsAfter(runId, lastCreatedAt, lastEventId, 250)) enqueue(event);
+      }, 750);
       heartbeat = setInterval(() => { if (!closed) controller.enqueue(new TextEncoder().encode(": heartbeat\n\n")); }, 15_000);
     },
     cancel() {
       closed = true;
       unsubscribe();
       if (heartbeat) clearInterval(heartbeat);
+      if (poller) clearInterval(poller);
     }
   });
   return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" } });

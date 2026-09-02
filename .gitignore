@@ -1,0 +1,30 @@
+node_modules/
+.next/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.protocol-inspect/
+coverage/
+*.tsbuildinfo
+review/
+.env*
+!.env.example
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Local/editor state
+.vscode/*
+!.vscode/settings.json
+.idea/
+
+# Generated reports and local test artifacts
+playwright-report/
+test-results/
+dist/
+build/

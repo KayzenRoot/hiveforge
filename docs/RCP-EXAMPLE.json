@@ -1,0 +1,15 @@
+{
+  "protocol": "RCP",
+  "version": "0.1",
+  "review_id": "review-001",
+  "project_id": "project-uuid",
+  "run_id": "run-uuid",
+  "work_order_id": "WO-ABC12345",
+  "decision": "APPROVED",
+  "action": "CONTINUE",
+  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "base_sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "findings": [],
+  "executor_prompt": "Continue with the next safe increment and return validation evidence.",
+  "created_at": "2026-09-01T00:00:00.000Z"
+}

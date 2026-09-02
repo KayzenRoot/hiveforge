@@ -21,7 +21,7 @@ Start the separate mailbox worker in another terminal:
 npm run worker
 ```
 
-The worker watches each registered project's `reviewMailboxPath`. Only top-level `.json` files are consumed. Processed files move to `.processed`; invalid files move to `.rejected`.
+The worker watches each registered project's `reviewMailboxPath` and reconciles the registry every five seconds, so projects registered after worker startup are picked up without a restart. Only top-level `.json` files are consumed. Processed files move to `.processed`; invalid files move to `.rejected`.
 
 ## Validation commands
 
@@ -35,8 +35,10 @@ npm run build
 
 ## Review contract
 
-See `docs/RCP-EXAMPLE.json`. A valid contract must include project, run, work order, base SHA and head SHA. Evidence Lock rejects a review whose Git identity does not match the captured run evidence.
+See `docs/RCP-EXAMPLE.json`. The canonical contract uses `schema_version`, `review_id`, `project_id`, `work_order_id`, `base_sha`, `head_sha`, `verdict`, `progress_percent`, `summary`, `findings`, `next_action`, `executor_prompt` and `checkpoint_note`. A full Git SHA is required; `work_order_id` uniquely resolves the run. Evidence Lock also requires clean working-tree evidence.
+
+Validation runs the configured project `testCommand` and any configured optional lint, typecheck and build commands after every terminal Codex turn. Each result is persisted in SQLite with command, timestamps, exit code, stdout, stderr and `PASS`, `FAIL`, `NOT_CONFIGURED` or `ERROR`.
 
 ## Environment notes
 
-No secret, cookie or raw authentication token is stored by HiveForge. The Codex adapter asks App Server for auth status with `includeToken: false` when a real process is started.
+No secret, cookie or raw authentication token is stored by HiveForge. The Codex adapter uses the installed official App Server lifecycle and asks `account/read` with `refreshToken: false`; it does not call the legacy `getAuthStatus` method.

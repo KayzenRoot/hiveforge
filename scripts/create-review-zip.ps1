@@ -56,13 +56,21 @@ function Invoke-CapturedCommand {
   $display = $Executable
   if ($Arguments.Count -gt 0) { $display += " " + ($Arguments -join " ") }
   $exitCode = 0
+  $previousErrorActionPreference = $ErrorActionPreference
+  $nativePreferenceExists = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+  $previousNativePreference = if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference } else { $false }
   try {
+    $ErrorActionPreference = "Continue"
+    if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference = $false }
     & $Executable @Arguments 1> $stdoutPath 2> $stderrPath
     $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
   } catch {
     $exitCode = 127
     Write-Utf8File -Path $stdoutPath -Content ""
     Write-Utf8File -Path $stderrPath -Content $_.Exception.Message
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($nativePreferenceExists) { $PSNativeCommandUseErrorActionPreference = $previousNativePreference }
   }
   $stdout = ""
   $stderr = ""
@@ -129,7 +137,7 @@ function Assert-ZipIsValid {
       "evidence/remote.txt", "evidence/compare-base.txt", "evidence/pr.txt",
       "evidence/release.txt", "evidence/ci-status.txt",
       "evidence/commands-run.txt", "validation/tests.txt", "validation/lint.txt",
-      "validation/typecheck.txt", "validation/build.txt"
+      "validation/typecheck.txt", "validation/build.txt", "validation/e2e.txt"
     )
     foreach ($entry in $required) {
       if ($names -notcontains $entry) { throw "ZIP is missing required entry: $entry" }
@@ -158,7 +166,7 @@ try {
   $remoteUrlRecord = Invoke-CapturedCommand -Label "git remote origin" -Executable "git" -Arguments @("remote", "get-url", "origin") -AllowFailure
   $fetchMainRecord = Invoke-CapturedCommand -Label "git fetch origin main" -Executable "git" -Arguments @("fetch", "origin", "main", "--quiet") -AllowFailure
   $remoteMainRecord = Invoke-CapturedCommand -Label "git remote main" -Executable "git" -Arguments @("rev-parse", "--verify", "origin/main") -AllowFailure
-  $baseRecord = if ($remoteMainRecord.ExitCode -eq 0) { $remoteMainRecord } elseif ($headRecord.ExitCode -eq 0) { Invoke-CapturedCommand -Label "git base parent" -Executable "git" -Arguments @("rev-parse", "HEAD^") -AllowFailure } else { $null }
+  $baseRecord = if ($remoteMainRecord.ExitCode -eq 0) { $remoteMainRecord } else { $null }
   $logRecord = Invoke-CapturedCommand -Label "git log" -Executable "git" -Arguments @("log", "-10", "--oneline", "--decorate") -AllowFailure
   $branchesRecord = Invoke-CapturedCommand -Label "git branches" -Executable "git" -Arguments @("branch", "--all", "--verbose") -AllowFailure
   $headSha = if ($headRecord.ExitCode -eq 0) { $headRecord.Stdout.Trim() } else { $null }
@@ -237,7 +245,7 @@ try {
 
   $packagePath = Join-Path $RepoRoot "package.json"
   $package = if (Test-Path -LiteralPath $packagePath) { Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json } else { $null }
-  $scriptNames = [ordered]@{ tests = "test"; lint = "lint"; typecheck = "typecheck"; build = "build" }
+  $scriptNames = [ordered]@{ tests = "test"; e2e = "test:e2e"; lint = "lint"; typecheck = "typecheck"; build = "build" }
   $validation = [ordered]@{}
   foreach ($label in $scriptNames.Keys) {
     $scriptName = $scriptNames[$label]
@@ -281,7 +289,7 @@ try {
     "REVIEW-MANIFEST.md", "REVIEW-MANIFEST.json",
     "evidence/git-status.txt", "evidence/git-log.txt", "evidence/git-branches.txt", "evidence/git-head.txt", "evidence/git-diff-stat.txt", "evidence/git-diff.patch", "evidence/changed-files.txt", "evidence/repository-tree.txt", "evidence/environment.txt", "evidence/commands-run.txt",
     "evidence/remote.txt", "evidence/compare-base.txt", "evidence/pr.txt", "evidence/release.txt", "evidence/ci-status.txt",
-    "validation/tests.txt", "validation/lint.txt", "validation/typecheck.txt", "validation/build.txt", "repository/"
+    "validation/tests.txt", "validation/e2e.txt", "validation/lint.txt", "validation/typecheck.txt", "validation/build.txt", "repository/"
   )
   Write-Utf8File -Path (Join-Path $RunDirectory "evidence/changed-files.txt") -Content $(if ($changedFiles.Count -gt 0) { $changedFiles -join "`r`n" } else { "<none>" })
 
@@ -339,7 +347,9 @@ try {
   )
   foreach ($label in $validation.Keys) {
     $item = $validation[$label]
-    $markdown += "| $label | $($item.command ?? 'not configured') | $($item.exit_code ?? '-') | $($item.status) |"
+    $commandText = if ($null -eq $item.command) { "not configured" } else { [string]$item.command }
+    $exitText = if ($null -eq $item.exit_code) { "-" } else { [string]$item.exit_code }
+    $markdown += "| $label | $commandText | $exitText | $($item.status) |"
   }
   $markdown += @(
     "",
@@ -367,7 +377,8 @@ try {
   if ($SimulateFailureBeforeReplace) { throw "Simulated failure before canonical replacement." }
   Replace-CanonicalZip -Source $TemporaryZip -Destination $CanonicalZip
   Assert-ZipIsValid -ZipPath $CanonicalZip
-  Write-Host "Review ZIP ready: $([System.IO.Path]::GetRelativePath($RepoRoot, $CanonicalZip).Replace('\', '/'))"
+  $relativeZip = $CanonicalZip.Substring($RepoRoot.Length + 1).Replace('\', '/')
+  Write-Host "Review ZIP ready: $relativeZip"
 } catch {
   Write-Error $_
   exit 1

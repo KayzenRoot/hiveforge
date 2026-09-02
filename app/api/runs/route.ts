@@ -4,6 +4,18 @@ import type { AutonomyMode } from "../../../src/core/types";
 
 export const runtime = "nodejs";
 
+export function GET(request: NextRequest) {
+  const { db } = getRuntime();
+  const runId = request.nextUrl.searchParams.get("runId");
+  const projectId = request.nextUrl.searchParams.get("projectId");
+  if (runId) {
+    const overview = db.getRunOverview(runId);
+    return overview ? NextResponse.json({ overview }) : NextResponse.json({ error: "Run not found" }, { status: 404 });
+  }
+  if (projectId) return NextResponse.json({ run: db.getLatestRun(projectId) ?? null });
+  return NextResponse.json({ error: "runId or projectId is required" }, { status: 400 });
+}
+
 export async function POST(request: NextRequest) {
   const { db, codex, engine } = getRuntime();
   const body = await request.json() as { projectId?: string; prompt?: string };

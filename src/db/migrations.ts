@@ -115,5 +115,53 @@ export const migrations: Array<{ version: number; sql: string }> = [
         created_at TEXT NOT NULL
       );
     `
+  },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE runs ADD COLUMN run_base_sha TEXT;
+      ALTER TABLE runs ADD COLUMN run_base_branch TEXT;
+      ALTER TABLE runs ADD COLUMN last_review_status TEXT;
+      ALTER TABLE runs ADD COLUMN last_review_verdict TEXT;
+      ALTER TABLE runs ADD COLUMN last_review_summary TEXT;
+      ALTER TABLE runs ADD COLUMN last_checkpoint_note TEXT;
+      ALTER TABLE runs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE runs ADD COLUMN current_blocker TEXT;
+      ALTER TABLE git_evidence ADD COLUMN is_clean INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE dispatches ADD COLUMN thread_id TEXT;
+      ALTER TABLE dispatches ADD COLUMN turn_id TEXT;
+      CREATE TABLE IF NOT EXISTS codex_turns (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL UNIQUE,
+        dispatch_key TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error TEXT,
+        validation_started_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(run_id, dispatch_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_codex_turns_run_status ON codex_turns(run_id, status);
+      CREATE TABLE IF NOT EXISTS validation_results (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        turn_id TEXT NOT NULL REFERENCES codex_turns(turn_id),
+        kind TEXT NOT NULL,
+        command TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        exit_code INTEGER,
+        stdout TEXT NOT NULL DEFAULT '',
+        stderr TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        UNIQUE(run_id, turn_id, kind)
+      );
+      CREATE INDEX IF NOT EXISTS idx_validation_results_run ON validation_results(run_id, finished_at);
+    `
   }
 ];

@@ -1,30 +1,39 @@
-import { ReviewMailboxWatcher } from "./mailbox/watcher";
+import { MailboxWatcherRegistry } from "./mailbox/registry";
 import { getRuntime } from "./server/runtime";
 
 async function main() {
   const runtime = getRuntime();
-  const watchers: ReviewMailboxWatcher[] = [];
-  for (const project of runtime.db.listProjects()) {
-    const watcher = new ReviewMailboxWatcher(project.reviewMailboxPath, {
-      onReview: async (review) => {
-        const result = await runtime.engine.processReview(review);
-        if (!result.accepted && result.run) {
-          const event = runtime.db.appendEvent(result.run.id, "REVIEW_REJECTED", result.errors.join("; "), result.run.state);
-          runtime.events.publish(event);
-        }
-      },
-      onRejected: async (input) => {
-        runtime.db.appendMailboxEvent(input.file, "REJECTED", input.errors.join("; "));
-        console.warn(`[hiveforge] mailbox rejected ${input.file}: ${input.errors.join("; ")}`);
+  const registry = new MailboxWatcherRegistry(() => ({
+    onReview: async (review) => {
+      const result = await runtime.engine.processReview(review);
+      if (!result.accepted && result.run) {
+        const event = runtime.db.appendEvent(result.run.id, "REVIEW_REJECTED", result.errors.join("; "), result.run.state);
+        runtime.events.publish(event);
       }
-    });
-    await watcher.start();
-    watchers.push(watcher);
-  }
-  process.on("SIGINT", () => { watchers.forEach((watcher) => watcher.stop()); process.exit(0); });
-  process.on("SIGTERM", () => { watchers.forEach((watcher) => watcher.stop()); process.exit(0); });
-  console.log(`HiveForge worker watching ${watchers.length} mailbox(es)`);
-  setInterval(() => { for (const watcher of watchers) void watcher.scan(); }, 5_000);
+    },
+    onRejected: async (input) => {
+      runtime.db.appendMailboxEvent(input.file, "REJECTED", input.errors.join("; "));
+      console.warn("[hiveforge] mailbox rejected " + input.file + ": " + input.errors.join("; "));
+    }
+  }));
+
+  const reconcile = async () => {
+    try {
+      await registry.reconcile(runtime.db.listProjects());
+    } catch (error) {
+      console.error("[hiveforge] mailbox reconciliation failed", error);
+    }
+  };
+  await reconcile();
+  const interval = setInterval(() => { void reconcile(); void registry.scanAll(); }, 5_000);
+  const shutdown = () => {
+    clearInterval(interval);
+    registry.stopAll();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  console.log("HiveForge worker watching " + registry.size + " mailbox(es); dynamic reconciliation enabled");
 }
 
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

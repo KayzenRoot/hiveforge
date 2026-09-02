@@ -10,7 +10,7 @@ export interface LoopGuardResult {
 
 export function evaluateLoopGuard(run: Run, review: ReviewContract): LoopGuardResult {
   const nextIterationCount = run.iterationCount + 1;
-  const nextCorrectionCycles = run.correctionCycles + (review.action === "EXECUTE_CORRECTION" ? 1 : 0);
+  const nextCorrectionCycles = run.correctionCycles + (review.nextAction === "EXECUTE_CORRECTION" ? 1 : 0);
   const nextRepeatedFindings = { ...run.repeatedFindings };
   for (const finding of review.findings) nextRepeatedFindings[finding.id] = (nextRepeatedFindings[finding.id] ?? 0) + 1;
 

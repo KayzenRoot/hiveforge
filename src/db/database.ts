@@ -3,7 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { migrations } from "./migrations";
-import type { AutonomyMode, CodexThread, GitEvidence, Project, ProjectInput, ReviewContract, ReviewStatus, Run, RunEvent, RunState } from "../core/types";
+import type { AutonomyMode, CodexThread, CodexTurn, CodexTurnStatus, GitEvidence, Project, ProjectInput, ReviewContract, ReviewSnapshot, ReviewStatus, Run, RunEvent, RunOverview, RunState, ValidationKind, ValidationResult, ValidationStatus } from "../core/types";
+import { serializeReviewContract, validateReviewContract } from "../core/rcp";
 
 type Row = Record<string, unknown>;
 
@@ -30,6 +31,15 @@ function mapProject(row: Row): Project {
   };
 }
 
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function mapRun(row: Row): Run {
   return {
     id: String(row.id),
@@ -42,11 +52,19 @@ function mapRun(row: Row): Run {
     repeatedFindingThreshold: Number(row.repeated_finding_threshold),
     iterationCount: Number(row.iteration_count),
     correctionCycles: Number(row.correction_cycles),
-    repeatedFindings: JSON.parse(String(row.repeated_findings_json)) as Record<string, number>,
+    repeatedFindings: parseJson<Record<string, number>>(row.repeated_findings_json, {}),
     currentPrompt: row.current_prompt ? String(row.current_prompt) : null,
+    runBaseSha: row.run_base_sha ? String(row.run_base_sha) : null,
+    runBaseBranch: row.run_base_branch ? String(row.run_base_branch) : null,
     expectedBaseSha: row.expected_base_sha ? String(row.expected_base_sha) : null,
     expectedHeadSha: row.expected_head_sha ? String(row.expected_head_sha) : null,
     lastReviewId: row.last_review_id ? String(row.last_review_id) : null,
+    lastReviewStatus: row.last_review_status ? row.last_review_status as ReviewStatus : null,
+    lastReviewVerdict: row.last_review_verdict ? String(row.last_review_verdict) as Run["lastReviewVerdict"] : null,
+    lastReviewSummary: row.last_review_summary ? String(row.last_review_summary) : null,
+    lastCheckpointNote: row.last_checkpoint_note ? String(row.last_checkpoint_note) : null,
+    progressPercent: Number(row.progress_percent ?? 0),
+    currentBlocker: row.current_blocker ? String(row.current_blocker) : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -132,6 +150,11 @@ export class Database {
     return row ? mapRun(row) : undefined;
   }
 
+  getRunByWorkOrderId(workOrderId: string): Run | undefined {
+    const row = this.get("SELECT * FROM runs WHERE work_order_id = ?", workOrderId);
+    return row ? mapRun(row) : undefined;
+  }
+
   listNonTerminalRuns(): Run[] {
     return this.all("SELECT * FROM runs WHERE state NOT IN ('COMPLETE', 'FAILED') ORDER BY updated_at ASC").map(mapRun);
   }
@@ -144,10 +167,15 @@ export class Database {
   updateRun(run: Run): Run {
     const timestamp = now();
     this.run(
-      `UPDATE runs SET state = ?, iteration_count = ?, correction_cycles = ?, repeated_findings_json = ?, current_prompt = ?, expected_base_sha = ?, expected_head_sha = ?, last_review_id = ?, updated_at = ? WHERE id = ?`,
-      run.state, run.iterationCount, run.correctionCycles, JSON.stringify(run.repeatedFindings), run.currentPrompt, run.expectedBaseSha, run.expectedHeadSha, run.lastReviewId, timestamp, run.id
+      `UPDATE runs SET state = ?, iteration_count = ?, correction_cycles = ?, repeated_findings_json = ?, current_prompt = ?, run_base_sha = ?, run_base_branch = ?, expected_base_sha = ?, expected_head_sha = ?, last_review_id = ?, last_review_status = ?, last_review_verdict = ?, last_review_summary = ?, last_checkpoint_note = ?, progress_percent = ?, current_blocker = ?, updated_at = ? WHERE id = ?`,
+      run.state, run.iterationCount, run.correctionCycles, JSON.stringify(run.repeatedFindings), run.currentPrompt, run.runBaseSha, run.runBaseBranch, run.expectedBaseSha, run.expectedHeadSha, run.lastReviewId, run.lastReviewStatus, run.lastReviewVerdict, run.lastReviewSummary, run.lastCheckpointNote, run.progressPercent, run.currentBlocker, timestamp, run.id
     );
     return this.getRun(run.id)!;
+  }
+
+  setRunBase(runId: string, baseSha: string, branch: string): Run {
+    this.run("UPDATE runs SET run_base_sha = ?, run_base_branch = ?, updated_at = ? WHERE id = ?", baseSha, branch, now(), runId);
+    return this.getRun(runId)!;
   }
 
   appendEvent(runId: string, type: string, message: string, state: RunState | null, payload: Record<string, unknown> = {}): RunEvent {
@@ -156,12 +184,22 @@ export class Database {
     return event;
   }
 
+  hasEvent(runId: string, type: string): boolean {
+    return Boolean(this.get("SELECT id FROM run_events WHERE run_id = ? AND type = ? LIMIT 1", runId, type));
+  }
+
   appendMailboxEvent(filePath: string, kind: string, message: string): void {
     this.run("INSERT INTO mailbox_events(id, file_path, kind, message, created_at) VALUES (?, ?, ?, ?, ?)", randomUUID(), filePath, kind, message, now());
   }
 
   listEvents(runId: string, limit = 100): RunEvent[] {
     return this.all("SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC LIMIT ?", runId, limit).map((row) => ({
+      id: String(row.id), runId: String(row.run_id), type: String(row.type), state: row.state ? row.state as RunState : null, message: String(row.message), payload: JSON.parse(String(row.payload_json)) as Record<string, unknown>, createdAt: String(row.created_at)
+    }));
+  }
+
+  listEventsAfter(runId: string, createdAt: string, eventId: string, limit = 100): RunEvent[] {
+    return this.all("SELECT * FROM run_events WHERE run_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at ASC, id ASC LIMIT ?", runId, createdAt, createdAt, eventId, limit).map((row) => ({
       id: String(row.id), runId: String(row.run_id), type: String(row.type), state: row.state ? row.state as RunState : null, message: String(row.message), payload: JSON.parse(String(row.payload_json)) as Record<string, unknown>, createdAt: String(row.created_at)
     }));
   }
@@ -175,19 +213,19 @@ export class Database {
 
   saveGitEvidence(input: Omit<GitEvidence, "id" | "capturedAt">): GitEvidence {
     const evidence: GitEvidence = { ...input, id: randomUUID(), capturedAt: now() };
-    this.run("INSERT INTO git_evidence(id, run_id, base_sha, head_sha, branch, status, changed_files_json, diff_summary, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", evidence.id, evidence.runId, evidence.baseSha, evidence.headSha, evidence.branch, evidence.status, JSON.stringify(evidence.changedFiles), evidence.diffSummary, evidence.capturedAt);
+    this.run("INSERT INTO git_evidence(id, run_id, base_sha, head_sha, branch, status, changed_files_json, diff_summary, is_clean, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", evidence.id, evidence.runId, evidence.baseSha, evidence.headSha, evidence.branch, evidence.status, JSON.stringify(evidence.changedFiles), evidence.diffSummary, evidence.isClean ? 1 : 0, evidence.capturedAt);
     return evidence;
   }
 
   getLatestGitEvidence(runId: string): GitEvidence | undefined {
     const row = this.get("SELECT * FROM git_evidence WHERE run_id = ? ORDER BY captured_at DESC LIMIT 1", runId);
     if (!row) return undefined;
-    return { id: String(row.id), runId: String(row.run_id), baseSha: String(row.base_sha), headSha: String(row.head_sha), branch: String(row.branch), status: String(row.status), changedFiles: JSON.parse(String(row.changed_files_json)) as string[], diffSummary: String(row.diff_summary), capturedAt: String(row.captured_at) };
+    return { id: String(row.id), runId: String(row.run_id), baseSha: String(row.base_sha), headSha: String(row.head_sha), branch: String(row.branch), status: String(row.status), changedFiles: parseJson<string[]>(row.changed_files_json, []), diffSummary: String(row.diff_summary), isClean: Number(row.is_clean ?? 1) === 1, capturedAt: String(row.captured_at) };
   }
 
   saveReview(review: ReviewContract, status: ReviewStatus): boolean {
     try {
-      this.run("INSERT INTO reviews(id, run_id, project_id, work_order_id, decision, action, head_sha, base_sha, status, payload_json, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", review.review_id, review.run_id, review.project_id, review.work_order_id, review.decision, review.action, review.head_sha, review.base_sha, status, JSON.stringify(review), now());
+      this.run("INSERT INTO reviews(id, run_id, project_id, work_order_id, decision, action, head_sha, base_sha, status, payload_json, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", review.reviewId, this.getRunByWorkOrderId(review.workOrderId)?.id ?? null, review.projectId, review.workOrderId, review.verdict, review.nextAction, review.headSha, review.baseSha, status, JSON.stringify(serializeReviewContract(review)), now());
       return true;
     } catch (error) {
       if (error instanceof Error && error.message.includes("UNIQUE")) return false;
@@ -198,7 +236,21 @@ export class Database {
   getReview(reviewId: string): { review: ReviewContract; status: ReviewStatus } | undefined {
     const row = this.get("SELECT payload_json, status FROM reviews WHERE id = ?", reviewId);
     if (!row) return undefined;
-    return { review: JSON.parse(String(row.payload_json)) as ReviewContract, status: row.status as ReviewStatus };
+    const parsed = validateReviewContract(parseJson<unknown>(row.payload_json, null));
+    if (!parsed.valid || !parsed.value) throw new Error(`Stored review ${reviewId} is not canonical: ${parsed.errors.join(", ")}`);
+    return { review: parsed.value, status: row.status as ReviewStatus };
+  }
+
+  getLatestReview(runId: string): ReviewSnapshot | null {
+    const row = this.get("SELECT id, payload_json, status FROM reviews WHERE run_id = ? ORDER BY processed_at DESC LIMIT 1", runId);
+    if (!row) return null;
+    const parsed = validateReviewContract(parseJson<unknown>(row.payload_json, null));
+    if (!parsed.valid || !parsed.value) return null;
+    return { review: parsed.value, status: row.status as ReviewStatus };
+  }
+
+  updateReviewStatus(reviewId: string, status: ReviewStatus): void {
+    this.run("UPDATE reviews SET status = ? WHERE id = ?", status, reviewId);
   }
 
   createApproval(reviewId: string): void {
@@ -214,6 +266,24 @@ export class Database {
     return Boolean(this.get("SELECT id FROM dispatches WHERE run_id = ? AND dispatch_key = ?", runId, dispatchKey));
   }
 
+  getDispatch(runId: string, dispatchKey: string): { id: string; status: string; threadId: string | null; turnId: string | null; reviewId: string | null; prompt: string } | undefined {
+    const row = this.get("SELECT * FROM dispatches WHERE run_id = ? AND dispatch_key = ?", runId, dispatchKey);
+    if (!row) return undefined;
+    return {
+      id: String(row.id), status: String(row.status), threadId: row.thread_id ? String(row.thread_id) : null,
+      turnId: row.turn_id ? String(row.turn_id) : null, reviewId: row.review_id ? String(row.review_id) : null, prompt: String(row.prompt)
+    };
+  }
+
+  getThreadForRun(runId: string): CodexThread | undefined {
+    const row = this.get("SELECT * FROM codex_threads WHERE run_id = ? ORDER BY created_at ASC LIMIT 1", runId);
+    if (!row) return undefined;
+    return {
+      id: String(row.id), runId: String(row.run_id), provider: row.provider as CodexThread["provider"], threadId: String(row.thread_id),
+      status: String(row.status), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    };
+  }
+
   recordDispatch(runId: string, reviewId: string | null, dispatchKey: string, prompt: string): boolean {
     try {
       this.run("INSERT INTO dispatches(id, run_id, review_id, dispatch_key, prompt, status, sent_at) VALUES (?, ?, ?, ?, ?, 'SENT', ?)", randomUUID(), runId, reviewId, dispatchKey, prompt, now());
@@ -222,5 +292,90 @@ export class Database {
       if (error instanceof Error && error.message.includes("UNIQUE")) return false;
       throw error;
     }
+  }
+
+  prepareDispatch(runId: string, reviewId: string | null, dispatchKey: string, prompt: string, threadId: string): boolean {
+    try {
+      this.run("INSERT INTO dispatches(id, run_id, review_id, dispatch_key, prompt, status, sent_at, thread_id) VALUES (?, ?, ?, ?, ?, 'PREPARED', ?, ?)", randomUUID(), runId, reviewId, dispatchKey, prompt, now(), threadId);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("UNIQUE")) return false;
+      throw error;
+    }
+  }
+
+  markDispatchSent(runId: string, dispatchKey: string, turnId: string): boolean {
+    const result = this.run("UPDATE dispatches SET status = 'SENT', turn_id = ?, sent_at = ? WHERE run_id = ? AND dispatch_key = ? AND status = 'PREPARED'", turnId, now(), runId, dispatchKey);
+    return result.changes > 0;
+  }
+
+  markDispatchFailed(runId: string, dispatchKey: string, message: string): boolean {
+    const result = this.run("UPDATE dispatches SET status = 'FAILED', prompt = prompt || ? WHERE run_id = ? AND dispatch_key = ? AND status = 'PREPARED'", `\n[dispatch-error] ${message}`, runId, dispatchKey);
+    return result.changes > 0;
+  }
+
+  createCodexTurn(input: { runId: string; threadId: string; turnId: string; dispatchKey: string; prompt: string; status?: CodexTurnStatus }): CodexTurn {
+    const id = randomUUID();
+    const timestamp = now();
+    const status = input.status ?? "IN_PROGRESS";
+    this.run("INSERT INTO codex_turns(id, run_id, thread_id, turn_id, dispatch_key, prompt, status, started_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, input.runId, input.threadId, input.turnId, input.dispatchKey, input.prompt, status, timestamp, timestamp, timestamp);
+    return this.getCodexTurn(input.turnId)!;
+  }
+
+  getCodexTurn(turnId: string): CodexTurn | undefined {
+    const row = this.get("SELECT * FROM codex_turns WHERE turn_id = ?", turnId);
+    return row ? this.mapCodexTurn(row) : undefined;
+  }
+
+  getCodexTurnByIdentity(threadId: string, turnId: string): CodexTurn | undefined {
+    const row = this.get("SELECT * FROM codex_turns WHERE thread_id = ? AND turn_id = ?", threadId, turnId);
+    return row ? this.mapCodexTurn(row) : undefined;
+  }
+
+  getActiveCodexTurn(runId: string): CodexTurn | undefined {
+    const row = this.get("SELECT * FROM codex_turns WHERE run_id = ? AND status IN ('PREPARED', 'IN_PROGRESS') ORDER BY started_at DESC LIMIT 1", runId);
+    return row ? this.mapCodexTurn(row) : undefined;
+  }
+
+  updateCodexTurnStatus(turnId: string, status: CodexTurnStatus, error: string | null = null): CodexTurn | undefined {
+    const finishedAt = ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED", "ORPHANED"].includes(status) ? now() : null;
+    this.run("UPDATE codex_turns SET status = ?, error = ?, finished_at = COALESCE(?, finished_at), updated_at = ? WHERE turn_id = ?", status, error, finishedAt, now(), turnId);
+    return this.getCodexTurn(turnId);
+  }
+
+  beginTurnValidation(turnId: string): boolean {
+    const result = this.run("UPDATE codex_turns SET validation_started_at = ?, updated_at = ? WHERE turn_id = ? AND validation_started_at IS NULL", now(), now(), turnId);
+    return result.changes > 0;
+  }
+
+  saveValidationResult(input: Omit<ValidationResult, "id">): ValidationResult {
+    const result: ValidationResult = { ...input, id: randomUUID() };
+    this.run("INSERT INTO validation_results(id, run_id, turn_id, kind, command, started_at, finished_at, exit_code, stdout, stderr, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", result.id, result.runId, result.turnId, result.kind, result.command, result.startedAt, result.finishedAt, result.exitCode, result.stdout, result.stderr, result.status);
+    return result;
+  }
+
+  getValidationResults(runId: string, turnId?: string): ValidationResult[] {
+    const rows = turnId
+      ? this.all("SELECT * FROM validation_results WHERE run_id = ? AND turn_id = ? ORDER BY finished_at ASC", runId, turnId)
+      : this.all("SELECT * FROM validation_results WHERE run_id = ? ORDER BY finished_at ASC", runId);
+    return rows.map((row) => ({
+      id: String(row.id), runId: String(row.run_id), turnId: String(row.turn_id), kind: row.kind as ValidationKind,
+      command: row.command ? String(row.command) : null, startedAt: String(row.started_at), finishedAt: String(row.finished_at),
+      exitCode: row.exit_code === null || row.exit_code === undefined ? null : Number(row.exit_code), stdout: String(row.stdout ?? ""), stderr: String(row.stderr ?? ""), status: row.status as ValidationStatus
+    }));
+  }
+
+  getRunOverview(runId: string): RunOverview | undefined {
+    const run = this.getRun(runId);
+    if (!run) return undefined;
+    return { run, gitEvidence: this.getLatestGitEvidence(runId) ?? null, validations: this.getValidationResults(runId), review: this.getLatestReview(runId), events: this.listEvents(runId, 250) };
+  }
+
+  private mapCodexTurn(row: Row): CodexTurn {
+    return {
+      id: String(row.id), runId: String(row.run_id), threadId: String(row.thread_id), turnId: String(row.turn_id), dispatchKey: String(row.dispatch_key), prompt: String(row.prompt),
+      status: row.status as CodexTurnStatus, startedAt: String(row.started_at), finishedAt: row.finished_at ? String(row.finished_at) : null, error: row.error ? String(row.error) : null,
+      validationStartedAt: row.validation_started_at ? String(row.validation_started_at) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    };
   }
 }

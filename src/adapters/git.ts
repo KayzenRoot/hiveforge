@@ -13,6 +13,7 @@ export interface GitSnapshot {
   status: string;
   changedFiles: string[];
   diffSummary: string;
+  isClean: boolean;
 }
 
 export class GitAdapter {
@@ -26,26 +27,23 @@ export class GitAdapter {
   }
 
   assertRepository(localPath: string): void {
-    if (!this.isRepository(localPath)) throw new Error(`Not a Git repository: ${localPath}`);
+    if (!this.isRepository(localPath)) throw new Error("Not a Git repository: " + localPath);
   }
 
-  snapshot(localPath: string): GitSnapshot {
+  snapshot(localPath: string, capturedBaseSha?: string): GitSnapshot {
     this.assertRepository(localPath);
     const headSha = git(localPath, ["rev-parse", "HEAD"]);
-    let baseSha = headSha;
-    try {
-      baseSha = git(localPath, ["rev-parse", "HEAD^"]);
-    } catch {
-      // A first commit has no parent; using HEAD as base is deterministic.
-    }
+    const baseSha = capturedBaseSha ?? headSha;
     const branch = git(localPath, ["branch", "--show-current"]) || "DETACHED";
-    const status = git(localPath, ["status", "--short"]) || "clean";
-    const changedFiles = git(localPath, ["diff", "--name-only", `${baseSha}..${headSha}`]).split(/\r?\n/).filter(Boolean);
-    const diffSummary = git(localPath, ["diff", "--stat", `${baseSha}..${headSha}`]) || "No committed changes";
-    return { baseSha, headSha, branch, status, changedFiles, diffSummary };
+    const statusOutput = git(localPath, ["status", "--short"]);
+    const isClean = statusOutput.length === 0;
+    const status = isClean ? "clean" : statusOutput;
+    const changedFiles = git(localPath, ["diff", "--name-only", baseSha + ".." + headSha]).split(/\r?\n/).filter(Boolean);
+    const diffSummary = git(localPath, ["diff", "--stat", baseSha + ".." + headSha]) || "No committed changes";
+    return { baseSha, headSha, branch, status, changedFiles, diffSummary, isClean };
   }
 
-  capture(runId: string, localPath: string): Omit<GitEvidence, "id" | "capturedAt"> {
-    return { runId, ...this.snapshot(localPath) };
+  capture(runId: string, localPath: string, capturedBaseSha?: string): Omit<GitEvidence, "id" | "capturedAt"> {
+    return { runId, ...this.snapshot(localPath, capturedBaseSha) };
   }
 }
